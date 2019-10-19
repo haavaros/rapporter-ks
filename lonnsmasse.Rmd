@@ -1,0 +1,230 @@
+---
+title: "Lønnsmasse kvinner og menn per ansiennitetsgruppe, per stillingsgruppe, kap. 4"
+author: "Haavard Ostermann, Fellesorganisasjonen"
+date: "18. mars 2019"
+output: pdf_document
+
+---
+
+```{r libraries, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+require(tidyverse)
+require(ggplot2)
+require(scales)
+require(knitr)
+require(kableExtra)
+require(printr)
+require(xlsx)
+```
+
+```{r init, include=FALSE, eval=TRUE}
+#Variabelnavn er hentet fra effacer_alfabetisk.pdf
+variabelnavn_forklaring <- c("Ansiennitet", "Ansiennitetsgruppe", "Årstall", "Fødselsår", "Kjønn", "Kommunenummer", "Startdato", "Stillingsbetegnelse", "Stillingsgruppe", "Stillingskode",
+                  "Tilsetningsforhold", "Tjenestested", "Utdanning", "Andre variable tillegg", "Antall vikartimer", "Arbeidstimer per uke", "Stillingsprosent", "Fiktivt personnr.", "Faste tillegg pr mnd",
+                  "Funksjonstillegg undervisning", "Helg- og høytidstillegg", "Hjemmevaktstillegg", "Kvelds- og nattillegg", "Lønnssats", "Lørdags- og søndagstillegg", "Stillingsnummer (1 = Hoved/ 2=bistilling etc)", "Grunnlønn per måned utregnet etter dellønns-/stillingsprosent", "Pensjonsgivende del kveld/natt",
+                  "Pensjonsgivende del lørdag/søndag", "Variabel overtidsgodtgjøring")
+
+variabelnavn <- c("ans1", "ansgrp", "arstall", "faar", "kjonn", "komfor", "stdato", "stilbet", "stilgr", "stilkd",
+                  "tilsetf", "tjsted", "utdannk", "andvart", "antviktm", "arbtuke", "dlonpros", "fiktiv", "ftilmnd",
+                  "funk", "hehotleg", "hjemvakt", "kvnatleg", "lonnsats", "losotleg", "recart", "reglmnd", "trinnk_n",
+                  "trinnl_s", "varoveg")
+
+variabeltyper <- c(replicate(13, "c"), replicate(17,"d")) %>% paste0(collapse="")
+
+variabeltabell <- cbind(variabelnavn, variabelnavn_forklaring, c(replicate(13, "c"), replicate(17,"d"))) %>% as_tibble() %>% rename(Variabeltype = V3)
+
+pai <- read_csv2(file = "sml_februar_Q_2018_csv2.dat",
+                 col_names = variabelnavn,
+                 col_types = variabeltyper,
+                 locale = locale(encoding = 'ISO-8859-1'))
+
+
+
+```
+
+```{r setup, include=FALSE}
+
+pai <- readRDS("pai.Rdata")
+lonnsmasse <- sum(pai$lonnsats)
+snittlonn <- lonnsmasse/nrow(pai)
+
+lonnsmasse_k <- pai %>% 
+  filter(kjonn == "K") %>% 
+  select(lonnsats) %>% 
+  sum()
+
+lonnsmasse_m <- pai %>% 
+  filter(kjonn == "M") %>% 
+  select(lonnsats) %>% 
+  sum()
+
+andel_kvinner_global <- lonnsmasse_k/lonnsmasse*100
+
+liste_stillingsgrupper <- pai %>% 
+  filter(grepl("D", stilgr)) %>% 
+  group_by(stilgr) %>% 
+  summarise()
+
+```
+
+
+```{r funksjoner, include=FALSE}
+tabell_funksjon <- function(grp){
+  #Tabell for antall kvinner per ansiennitetsgruppe
+  tmp_tabell_k <- pai %>% 
+    filter(kjonn == "K" ) %>% 
+    filter(grepl(grp, stilgr)) %>% 
+    select(ansgrp, kjonn, lonnsats) %>%
+    group_by(ansgrp) %>% 
+    summarise(Lonnsmasse_kvinner = sum(lonnsats))
+  
+  #Tabell for antall menn  per ansiennitetsgruppe
+  tmp_tabell_m <- if(grp != "D901"){
+    pai %>% 
+    filter(kjonn == "M" ) %>% 
+    filter(grepl(grp, stilgr)) %>% 
+    select(ansgrp, kjonn, lonnsats) %>%
+    group_by(ansgrp) %>% 
+    summarise(Lonnsmasse_menn = sum(lonnsats)) %>% 
+                 select(Lonnsmasse_menn)
+  } else {
+    pai %>% 
+    filter(kjonn == "M" ) %>% 
+    filter(grepl(grp, stilgr)) %>% 
+    select(ansgrp, kjonn, lonnsats) %>%
+    group_by(ansgrp) %>% 
+    summarise(Lonnsmasse_menn = sum(lonnsats)) %>% 
+      select(Lonnsmasse_menn) %>% 
+      add_row(Lonnsmasse_menn= 0, .before = 8)
+  }
+
+  #Setter sammen de to tabellene
+  tmp_tabell <- bind_cols(tmp_tabell_k, tmp_tabell_m) %>% 
+     mutate(Kvinneandel = (Lonnsmasse_kvinner/(Lonnsmasse_kvinner + Lonnsmasse_menn)*100),
+            Manneandel = (Lonnsmasse_menn/(Lonnsmasse_kvinner + Lonnsmasse_menn)*100)) %>% 
+     arrange(desc(Kvinneandel)) 
+               
+   #Legger til en siste rad med summer
+   siste_rad_tmp <- c(1000, sum(tmp_tabell$Lonnsmasse_kvinner), sum(tmp_tabell$Lonnsmasse_menn), mean(tmp_tabell$Kvinneandel), mean(tmp_tabell$Manneandel))
+   tabell_tmp <- rbind(tmp_tabell,siste_rad_tmp)
+
+tabell_tmp[nrow(tabell_tmp),1] = "Totalt"
+tabell_tmp <- tabell_tmp %>% 
+  mutate(Lonnsmasse_kvinner = round(Lonnsmasse_kvinner/1000000, 0),
+         Lonnsmasse_menn = round(Lonnsmasse_menn/1000000, 0),
+         Kvinneandel = round(Kvinneandel, 1),
+         Manneandel = round(Manneandel, 1)) %>% 
+  mutate(Vekt = round(Lonnsmasse_kvinner*(Kvinneandel-andel_kvinner_global),1))
+
+#write.xlsx(tabell_tmp, "lonnsmasse.xlsx", sheetName=grp, append = TRUE) #skriver tabellene til en excelbok, et ark per stilgr
+
+#Styling
+ kable(tabell_tmp, linesep = "", format.args = list(decimal.mark = ',', big.mark = " ")) %>% 
+   kable_styling(latex_options = c("striped", "hold_position")) %>% 
+   row_spec(nrow(tabell_tmp), bold = TRUE) 
+}
+
+fig_funksjon <- function(grp){
+  point <- format_format(big.mark = " ", decimal.mark = ",", scientific = FALSE)
+  pai %>% 
+    filter(stilgr == grp) %>% 
+    ggplot(aes(lonnsats)) +  
+    geom_histogram(aes(fill = kjonn), binwidth = 25000, na.rm=TRUE) +
+    scale_x_continuous(limits = c(350000,750000), labels = point, name = "Lønnssats") +
+    ylab("Antall") +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+}
+```
+
+
+## Oversikt
+Lønnsmasse angitt i millioner kroner
+```{r Tabell_total, echo=FALSE, eval=TRUE, results="asis"}
+#Tabell for antall kvinner totalt per stilgrp
+Lonnsmasse_totalt_tabell_k <- pai %>% 
+  select(stilgr, kjonn, lonnsats) %>%
+  filter(kjonn == "K" ) %>% 
+  filter(grepl("D", stilgr)) %>% 
+  group_by(stilgr) %>% 
+  summarise(Lonnsmasse_kvinner = sum(lonnsats))
+  
+#Tabell for antall menn totalt per stilgrp
+Lonnsmasse_totalt_tabell_m <- pai %>% 
+  select(stilgr, kjonn, lonnsats) %>%
+  filter(kjonn == "M") %>%
+  filter(grepl("D", stilgr)) %>% 
+  group_by(stilgr) %>% 
+  summarise(Lonnsmasse_menn = sum(lonnsats)) %>% 
+  select(Lonnsmasse_menn)
+
+#Setter sammen de to tabellene
+Lonnsmasse_totalt_tabell <- bind_cols(Lonnsmasse_totalt_tabell_k, Lonnsmasse_totalt_tabell_m) %>% 
+  mutate(Kvinneandel = (Lonnsmasse_kvinner/(Lonnsmasse_kvinner + Lonnsmasse_menn)*100),
+         Manneandel = (Lonnsmasse_menn/(Lonnsmasse_kvinner + Lonnsmasse_menn)*100)) %>% 
+  arrange(desc(Kvinneandel)) 
+
+siste_rad <- c(1000, 
+               sum(Lonnsmasse_totalt_tabell$Lonnsmasse_kvinner), 
+               sum(Lonnsmasse_totalt_tabell$Lonnsmasse_menn),
+               mean(Lonnsmasse_totalt_tabell$Kvinneandel),
+               mean(Lonnsmasse_totalt_tabell$Manneandel))
+
+tabell_total <- rbind(Lonnsmasse_totalt_tabell,siste_rad)
+tabell_total[nrow(tabell_total),1] = "Totalt"
+tabell_total <- tabell_total %>% 
+  mutate(Lonnsmasse_kvinner = round(Lonnsmasse_kvinner/1000000, 0),
+         Lonnsmasse_menn = round(Lonnsmasse_menn/1000000, 0),
+         Kvinneandel = round(Kvinneandel, 1),
+         Manneandel = round(Manneandel, 1))
+
+
+
+kable(tabell_total, linesep = "", format.args = list(decimal.mark = ',', big.mark = " ")) %>% 
+  kable_styling(latex_options = "striped") %>% 
+  row_spec(nrow(tabell_total), bold = TRUE)
+
+#Lonnsmasse_stgrp_totalt_fig
+pai %>%  
+  ggplot(aes(x = lonnsats)) +
+  geom_histogram(aes(fill = kjonn), binwidth = 25000, na.rm=TRUE) +
+  scale_x_continuous(labels = number, limits = c(350000,750000), name = "Lønnssats")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_y_continuous(labels = number, name = "Antall")
+  
+```
+
+```{r rapport, results="asis", echo=FALSE}
+
+for(i in 1:(nrow(liste_stillingsgrupper[,1]))){
+  tmp <- as.character(liste_stillingsgrupper[i,1]) 
+    cat(paste("## ", "Stillingsgruppe", tmp, '\n', "Lønnsmasse i millioner kroner. Sortert synkende etter kvinneandel. \"Vekt\" er produktet av lønnsmassen og differansen mellom kvinneandel og gjennomsnittlig kvinneandel. Dersom vekten er positiv vil lønnstillegg her ha positiv likelønnseffekt. Negativt tall gir negativ effekt. Jo større tall jo større effekt."))
+    cat('\n')
+    print(tabell_funksjon(tmp))
+    cat('Intervall: 350 000 - 750 000. Klassebredde: 25 000', '\n \n')
+    print(fig_funksjon(tmp))
+    cat('\\newpage', '\n \n')
+    }
+
+```
+
+## Oversikt stillingskoder per stillingsgruppe
+
+```{r stillingskoder, echo = FALSE}
+tabell <- pai %>% 
+  select(stilgr, stilkd) %>% 
+  filter(grepl("D", stilgr)) %>% 
+  group_by(stilgr, stilkd) %>% 
+    summarise() %>% 
+  as_tibble() %>% 
+  rename(Stillingsgruppe = stilgr, 
+         Stillingskode = stilkd)
+
+tabell1 <- tabell %>% slice(1:39) 
+tabell2 <- tabell %>% slice(40:78)
+tabell3 <- cbind(tabell1, tabell2) 
+
+kable(tabell3, linesep = "") %>% 
+  kable_styling(latex_options = "striped")
+  
+
+```
